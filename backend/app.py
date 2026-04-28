@@ -1,9 +1,16 @@
-from google import genai
+import os
+from dotenv import load_dotenv
+from google import genai  # Importação correta para esta biblioteca
 
-# The client gets the API key from the environment variable `GEMINI_API_KEY`.
-client = genai.Client(api_key="AIzaSyBfgTIsw3n7RYSNdNwjhIp4jEBvdpj1ws8")
+load_dotenv()
 
+# Em vez de .configure(), você cria um cliente
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+
+# Para usar, você chama o cliente
 response = client.models.generate_content(
-    model="gemini-3-flash-preview", contents="Você sera um chat de vendas automatico inteligente, responda o clinente com clareza sem estender muito as respostas, informações, responda com o que o cliente esta buscando, caso o cliente relate um problema, retorene um produto que pode ajudar com o problem dele"
+    model="gemini-3-flash-preview",
+    contents="Olá, tudo bem?"
 )
+
 print(response.text)
