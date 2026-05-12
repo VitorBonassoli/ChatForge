@@ -16,7 +16,7 @@ spec:
       - name: backend
         image: your-backend-image:latest
         ports:
-        - containerPort: 8080
+        - containerPort: 5000
         env:
         - name: DATABASE_URL
-          value: "your-database-url"
+          value: "postgresql://postgres:vitor2006@postgres:5432/chatforge_db"
