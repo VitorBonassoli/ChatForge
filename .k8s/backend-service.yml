@@ -1,12 +1,12 @@
-apiVersion:v1
+apiVersion: v1
 kind: Service
 metadata:
-  name:backend-Service
+  name: backend-Service
 spec:
   selector:
-    app:backend
+    app: backend
   ports:
-     -protocol:TCP
-     port:5000
-  targetPort:5000
+     -protocol: TCP
+     port: 5000
+  targetPort: 5000
   type: ClusterIP
