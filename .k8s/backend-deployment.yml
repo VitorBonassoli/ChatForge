@@ -43,3 +43,8 @@ spec:
             secretKeyRef:
               name: meu-secret
               key: BACKEND_PORT
+        - name: GEMINI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: meu-secret
+              key: GEMINI_API_KEY
