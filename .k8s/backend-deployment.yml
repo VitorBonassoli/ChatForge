@@ -14,9 +14,37 @@ spec:
     spec:
       containers:
       - name: backend
-        image: your-backend-image:latest
+        image: bonassolindo/chatforge-backend:latest
         ports:
         - containerPort: 5000
         env:
-        - name: DATABASE_URL
-          value: "postgresql://postgres:vitor2006@postgres:5432/chatforge_db"
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: meu-secret
+              key: POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: meu-secret
+              key: POSTGRES_PASSWORD
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: meu-secret
+              key: POSTGRES_DB
+        - name: POSTGRES_PORT
+          valueFrom:
+            secretKeyRef:
+              name: meu-secret
+              key: POSTGRES_PORT
+        - name: BACKEND_PORT
+          valueFrom:
+            secretKeyRef:
+              name: meu-secret
+              key: BACKEND_PORT
+        - name: GEMINI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: meu-secret
+              key: GEMINI_API_KEY
