@@ -1,4 +1,7 @@
-flask
-flask-cors
-google-genai
-python-dotenv
+fastapi
+uvicorn
+psycopg2-binary
+langchain
+langchain-google-genai
+langchain-groq
+pydantic[email]
