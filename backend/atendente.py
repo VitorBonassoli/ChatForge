@@ -59,9 +59,9 @@ def get_connection():
     return psycopg2.connect(
         host="localhost",
         port=5432,
-        database="chatbot",
+        database="chatforge_db",
         user="postgres",
-        password="postgres"
+        password="vitor2006"
     )
 
 
@@ -295,15 +295,15 @@ class PromptEngineering:
 # ══════════════════════════════════════════════════════════════════
 
 gemini = ChatGoogleGenerativeAI(
-    model="gemini-2.0-flash-lite",
+    model="gemini-flash-latest",
     google_api_key=GEMINI_API_KEY,
-    temperature=0.7,
+    temperature=0.7
 )
 
 groq_model = ChatGroq(
     model="llama-3.3-70b-versatile",
     api_key=GROQ_API_KEY,
-    temperature=0.3,
+    temperature=0.3
 )
 
 _store: dict[str, InMemoryChatMessageHistory] = {}
@@ -456,7 +456,10 @@ def chat(
         },
         config={"configurable": {"session_id": str(conversa_id)}},
     )
-    texto_resposta = resposta_obj.content
+    if isinstance(resposta_obj.content, list):
+            texto_resposta = resposta_obj.content[0].get("text", str(resposta_obj.content))
+    else:
+            texto_resposta = resposta_obj.content
 
     # ── 7. Persiste resposta ──────────────────────────────────────
     salvar_mensagem(conversa_id, "atendente", texto_resposta)
