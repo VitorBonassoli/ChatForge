@@ -35,7 +35,6 @@ app = FastAPI(
     version="2.0.0",
 )
 
-# ── CORS ── permite que o chat.html acesse a API pelo navegador
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -93,6 +92,11 @@ class ProdutoCreate(BaseModel):
     quantidade_estoque: int
 
 
+class LoginBody(BaseModel):
+    email: EmailStr
+    senha_hash: str
+
+
 # ══════════════════════════════════════════════════════════════════
 # CLIENTES
 # ══════════════════════════════════════════════════════════════════
@@ -103,16 +107,20 @@ def criar_cliente(body: ClienteCreate):
         cliente = cadastrar_cliente(body.nome, body.email, body.senha_hash)
         return {"sucesso": True, "cliente": serializar(cliente)}
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=f"Erro ao cadastrar cliente: {e or 'erro desconhecido'}")
 
 
 @app.get("/clientes/{cliente_id}/historico", summary="Histórico de mensagens do cliente")
 def historico_cliente(cliente_id: int):
     try:
         historico = buscar_historico(cliente_id)
+        if historico is None:
+            raise HTTPException(status_code=404, detail="Cliente não encontrado.")
         return {"sucesso": True, "historico": serializar_lista(historico)}
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=f"Erro ao buscar histórico do cliente {cliente_id}: {e or 'erro desconhecido'}")
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -123,9 +131,13 @@ def historico_cliente(cliente_id: int):
 def nova_conversa(body: ConversaCreate):
     try:
         conversa = iniciar_conversa(body.cliente_id)
+        if conversa is None:
+            raise HTTPException(status_code=404, detail="Cliente não encontrado.")
         return {"sucesso": True, "conversa": serializar(conversa)}
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=f"Erro ao iniciar conversa: {e or 'erro desconhecido'}")
 
 
 @app.delete("/conversas/{conversa_id}", summary="Encerrar conversa")
@@ -138,7 +150,7 @@ def fechar_conversa(conversa_id: int):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=f"Erro ao encerrar conversa {conversa_id}: {e or 'erro desconhecido'}")
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -147,7 +159,6 @@ def fechar_conversa(conversa_id: int):
 
 @app.post("/conversas/{conversa_id}/mensagens", summary="Enviar mensagem ao atendente")
 def enviar_mensagem(conversa_id: int, body: MensagemCreate):
-
     try:
         resultado = chat(
             conversa_id=conversa_id,
@@ -155,9 +166,13 @@ def enviar_mensagem(conversa_id: int, body: MensagemCreate):
             modo=body.modo,
             tipo_prompt=body.tipo_prompt,
         )
+        if resultado is None:
+            raise HTTPException(status_code=404, detail="Conversa não encontrada.")
         return {"sucesso": True, **resultado}
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Erro ao processar mensagem na conversa {conversa_id}: {e or 'erro desconhecido'}")
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -176,7 +191,7 @@ def criar_produto(body: ProdutoCreate):
         )
         return {"sucesso": True, "produto": serializar(produto)}
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=f"Erro ao cadastrar produto: {e or 'erro desconhecido'}")
 
 
 @app.get("/produtos/buscar", summary="Buscar produtos por palavras-chave")
@@ -188,17 +203,12 @@ def buscar(q: str = Query(..., description="Termos de busca separados por espaç
         produtos = buscar_produtos(palavras)
         return {"sucesso": True, "total": len(produtos), "produtos": serializar_lista(produtos)}
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=f"Erro ao buscar produtos: {e or 'erro desconhecido'}")
 
 
 # ══════════════════════════════════════════════════════════════════
 # LOGIN
 # ══════════════════════════════════════════════════════════════════
-
-class LoginBody(BaseModel):
-    email: EmailStr
-    senha_hash: str
-
 
 @app.post("/clientes/login", summary="Login do cliente")
 def login_cliente(body: LoginBody):
@@ -229,4 +239,4 @@ def login_cliente(body: LoginBody):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=f"Erro ao realizar login: {e or 'erro desconhecido'}")
