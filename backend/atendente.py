@@ -1,6 +1,5 @@
-
-#atendente.py — Assistente de Vendas com Engenharia de Prompts Avançada
-#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# atendente.py — Assistente de Vendas com Engenharia de Prompts Avançada
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 import re
 import logging
@@ -26,11 +25,11 @@ logger = logging.getLogger("atendente")
 
 
 # ══════════════════════════════════════════════════════════════════
-
+# CHAVES DE API
 # ══════════════════════════════════════════════════════════════════
 
-GEMINI_API_KEY = ""   
-GROQ_API_KEY   = ""  
+GEMINI_API_KEY = ""
+GROQ_API_KEY   = ""
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -56,13 +55,17 @@ class TipoPrompt(str, Enum):
 # ══════════════════════════════════════════════════════════════════
 
 def get_connection():
-    return psycopg2.connect(
-        host="localhost",
-        port=5432,
-        database="chatforge_db",
-        user="postgres",
-        password="vitor2006"
-    )
+    try:
+        return psycopg2.connect(
+            host="localhost",
+            port=5432,
+            database="chatforge_db",
+            user="postgres",
+            password="vitor2006"
+        )
+    except psycopg2.OperationalError as e:
+        logger.error("Falha ao conectar ao banco de dados: %s", e)
+        raise RuntimeError(f"Não foi possível conectar ao banco de dados: {e}")
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -139,7 +142,6 @@ class ValidacaoSeguranca:
 # DETECÇÃO DE INTENÇÃO DE COMPRA
 # ══════════════════════════════════════════════════════════════════
 
-# Padrões que indicam intenção de compra confirmada
 _COMPRA_PATTERNS = [
     r"\b(quero\s+comprar|vou\s+comprar|quero\s+levar|vou\s+levar)\b",
     r"\b(pode\s+separar|separa\s+para\s+mim|reserva\s+para\s+mim)\b",
@@ -150,7 +152,6 @@ _COMPRA_PATTERNS = [
 
 _RE_COMPRA = [re.compile(p, re.IGNORECASE) for p in _COMPRA_PATTERNS]
 
-# Regex para capturar quantidade na mensagem
 _RE_QUANTIDADE = re.compile(
     r'\b(\d+)\s*(unidade[s]?|uni\.?|un\.?|peça[s]?|item|itens)?\b',
     re.IGNORECASE
@@ -170,7 +171,6 @@ def extrair_quantidade(mensagem: str) -> int:
     match = _RE_QUANTIDADE.search(mensagem)
     if match:
         qty = int(match.group(1))
-        # Ignorar anos ou números muito grandes (>100 provavelmente não é quantidade)
         if 1 <= qty <= 100:
             return qty
     return 1
@@ -205,13 +205,6 @@ Tom: empático, profissional e orientado à solução.""",
 
 
 class PromptEngineering:
-    """
-    Fábrica de prompts combinando Modo (comportamento) + Tipo (estrutura).
-
-    Simples       → pergunta direta, estrutura mínima
-    Estruturado   → persona + contexto + tarefa + formato de saída
-    Especializado → chain-of-thought + few-shot examples + restrições rígidas
-    """
 
     @staticmethod
     def simples(modo: ModoIA) -> ChatPromptTemplate:
@@ -281,30 +274,39 @@ class PromptEngineering:
 
     @classmethod
     def obter(cls, tipo: TipoPrompt, modo: ModoIA) -> ChatPromptTemplate:
-        return {
+        fabricas = {
             TipoPrompt.SIMPLES:       cls.simples,
             TipoPrompt.ESTRUTURADO:   cls.estruturado,
             TipoPrompt.ESPECIALIZADO: cls.especializado,
-        }[tipo](modo)
+        }
+        if tipo not in fabricas:
+            raise ValueError(f"Tipo de prompt inválido: '{tipo}'. Opções: {list(fabricas.keys())}")
+        return fabricas[tipo](modo)
 
 
 # ══════════════════════════════════════════════════════════════════
 # MODELOS
-# Gemini 1.5 Flash → rápido, gratuito, ótimo para vendas/recomendações
-# Groq Llama 3.3   → gratuito, inferência ultra-rápida, ótimo para análise
 # ══════════════════════════════════════════════════════════════════
 
-gemini = ChatGoogleGenerativeAI(
-    model="gemini-flash-latest",
-    google_api_key=GEMINI_API_KEY,
-    temperature=0.7
-)
+try:
+    gemini = ChatGoogleGenerativeAI(
+        model="gemini-flash-latest",
+        google_api_key=GEMINI_API_KEY,
+        temperature=0.7
+    )
+except Exception as e:
+    logger.error("Falha ao inicializar modelo Gemini: %s", e)
+    raise RuntimeError(f"Não foi possível inicializar o modelo Gemini: {e}")
 
-groq_model = ChatGroq(
-    model="llama-3.3-70b-versatile",
-    api_key=GROQ_API_KEY,
-    temperature=0.3
-)
+try:
+    groq_model = ChatGroq(
+        model="llama-3.3-70b-versatile",
+        api_key=GROQ_API_KEY,
+        temperature=0.3
+    )
+except Exception as e:
+    logger.error("Falha ao inicializar modelo Groq: %s", e)
+    raise RuntimeError(f"Não foi possível inicializar o modelo Groq: {e}")
 
 _store: dict[str, InMemoryChatMessageHistory] = {}
 
@@ -358,22 +360,25 @@ def chat(
     Detecta intenção de compra e grava pedido no banco quando confirmado.
 
     Retorna dict com:
-      resposta        (str)   texto gerado pela IA
-      ia_usada        (str)   "gemini" ou "groq"
-      modo            (str)   modo de IA ativo
-      tipo_prompt     (str)   tipo de prompt usado
-      bloqueado       (bool)  True se bloqueado por segurança
-      motivo_bloqueio (str)   motivo do bloqueio ou None
-      pedido_registrado (bool) True se um pedido foi gravado nesta mensagem
-      pedido          (dict)  dados do pedido registrado, ou None
+      resposta          (str)   texto gerado pela IA
+      ia_usada          (str)   "gemini" ou "groq"
+      modo              (str)   modo de IA ativo
+      tipo_prompt       (str)   tipo de prompt usado
+      bloqueado         (bool)  True se bloqueado por segurança
+      motivo_bloqueio   (str)   motivo do bloqueio ou None
+      pedido_registrado (bool)  True se um pedido foi gravado nesta mensagem
+      pedido            (dict)  dados do pedido registrado, ou None
     """
 
     # ── 1. Validação de segurança ─────────────────────────────────
     seguro, motivo = ValidacaoSeguranca.verificar(mensagem_usuario)
     if not seguro:
         resposta = ValidacaoSeguranca.resposta_bloqueio(motivo)
-        salvar_mensagem(conversa_id, "cliente", mensagem_usuario)
-        salvar_mensagem(conversa_id, "atendente", f"[BLOQUEADO:{motivo}] {resposta}")
+        try:
+            salvar_mensagem(conversa_id, "cliente", mensagem_usuario)
+            salvar_mensagem(conversa_id, "atendente", f"[BLOQUEADO:{motivo}] {resposta}")
+        except Exception as e:
+            logger.error("Falha ao salvar mensagem bloqueada | conversa=%s | %s", conversa_id, e)
         return {
             "resposta": resposta,
             "ia_usada": "nenhuma",
@@ -386,11 +391,19 @@ def chat(
         }
 
     # ── 2. Persiste mensagem do cliente ───────────────────────────
-    salvar_mensagem(conversa_id, "cliente", mensagem_usuario)
+    try:
+        salvar_mensagem(conversa_id, "cliente", mensagem_usuario)
+    except Exception as e:
+        logger.error("Falha ao salvar mensagem do cliente | conversa=%s | %s", conversa_id, e)
+        raise RuntimeError(f"Erro ao salvar mensagem do cliente: {e or 'erro desconhecido'}")
 
     # ── 3. Recupera produtos do Postgres ──────────────────────────
-    palavras = extrair_palavras_chave(mensagem_usuario)
-    produtos  = buscar_produtos(palavras) if palavras else []
+    try:
+        palavras  = extrair_palavras_chave(mensagem_usuario)
+        produtos  = buscar_produtos(palavras) if palavras else []
+    except Exception as e:
+        logger.error("Falha ao buscar produtos | conversa=%s | %s", conversa_id, e)
+        produtos = []
 
     contexto_produtos = (
         "\n".join(
@@ -407,8 +420,8 @@ def chat(
     pedido_dados = None
 
     if detectar_intencao_compra(mensagem_usuario) and produtos:
-        quantidade = extrair_quantidade(mensagem_usuario)
-        produto_alvo = produtos[0]  # Produto mais relevante da busca
+        quantidade     = extrair_quantidade(mensagem_usuario)
+        produto_alvo   = produtos[0]
 
         pedido_resultado = _tentar_registrar_pedido(
             conversa_id=conversa_id,
@@ -416,10 +429,9 @@ def chat(
             quantidade=quantidade,
         )
         pedido_registrado = pedido_resultado["sucesso"]
-        pedido_dados = pedido_resultado.get("pedido")
+        pedido_dados      = pedido_resultado.get("pedido")
 
         if not pedido_resultado["sucesso"]:
-            # Falha ao gravar: avisa no contexto para a IA informar o cliente
             logger.error(
                 "FALHA ao registrar pedido | conversa=%s produto=%s erro=%s",
                 conversa_id, produto_alvo.get("nome"), pedido_resultado.get("erro"),
@@ -433,36 +445,48 @@ def chat(
     ia_selecionada = RoteadorIA.rotear(mensagem_usuario, modo)
     modelo = gemini if ia_selecionada == "gemini" else groq_model
 
-    # Suporte técnico sempre usa prompt especializado
     if modo == ModoIA.SUPORTE_TECNICO:
         tipo_prompt = TipoPrompt.ESPECIALIZADO
 
     # ── 6. Monta cadeia e invoca ──────────────────────────────────
-    prompt_template = PromptEngineering.obter(tipo_prompt, modo)
-    chain = prompt_template | modelo
+    try:
+        prompt_template = PromptEngineering.obter(tipo_prompt, modo)
+    except ValueError as e:
+        logger.error("Tipo de prompt inválido | conversa=%s | %s", conversa_id, e)
+        raise RuntimeError(f"Configuração de prompt inválida: {e}")
 
-    atendente = RunnableWithMessageHistory(
-        chain,
-        _get_historico,
-        input_messages_key="mensagem_usuario",
-        history_messages_key="historico",
-    )
+    try:
+        chain = prompt_template | modelo
 
-    resposta_obj = atendente.invoke(
-        {
-            "mensagem_usuario": mensagem_usuario,
-            "contexto_produtos": contexto_produtos,
-            "instrucoes_modo": _INSTRUCOES_MODO[modo],
-        },
-        config={"configurable": {"session_id": str(conversa_id)}},
-    )
+        atendente = RunnableWithMessageHistory(
+            chain,
+            _get_historico,
+            input_messages_key="mensagem_usuario",
+            history_messages_key="historico",
+        )
+
+        resposta_obj = atendente.invoke(
+            {
+                "mensagem_usuario": mensagem_usuario,
+                "contexto_produtos": contexto_produtos,
+                "instrucoes_modo": _INSTRUCOES_MODO[modo],
+            },
+            config={"configurable": {"session_id": str(conversa_id)}},
+        )
+    except Exception as e:
+        logger.error("Falha ao invocar modelo %s | conversa=%s | %s", ia_selecionada, conversa_id, e)
+        raise RuntimeError(f"Erro ao processar resposta da IA ({ia_selecionada}): {e or 'erro desconhecido'}")
+
     if isinstance(resposta_obj.content, list):
-            texto_resposta = resposta_obj.content[0].get("text", str(resposta_obj.content))
+        texto_resposta = resposta_obj.content[0].get("text", str(resposta_obj.content))
     else:
-            texto_resposta = resposta_obj.content
+        texto_resposta = resposta_obj.content
 
     # ── 7. Persiste resposta ──────────────────────────────────────
-    salvar_mensagem(conversa_id, "atendente", texto_resposta)
+    try:
+        salvar_mensagem(conversa_id, "atendente", texto_resposta)
+    except Exception as e:
+        logger.error("Falha ao salvar resposta do atendente | conversa=%s | %s", conversa_id, e)
 
     return {
         "resposta": texto_resposta,
@@ -477,23 +501,18 @@ def chat(
 
 
 # ══════════════════════════════════════════════════════════════════
-# REGISTRO DE PEDIDO (CT06 / CT07)
+# REGISTRO DE PEDIDO
 # ══════════════════════════════════════════════════════════════════
 
 def _tentar_registrar_pedido(conversa_id: int, produto: dict, quantidade: int) -> dict:
     """
     Tenta registrar um pedido e reservar estoque.
     Retorna dict com 'sucesso' (bool), 'pedido' (dict|None) e 'erro' (str|None).
-
-    Em caso de falha de banco:
-      - Loga o erro detalhado no terminal (visível no Docker)
-      - Retorna sucesso=False para o fluxo principal tratar
     """
     try:
         with get_connection() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
 
-                # Busca dados atuais do produto com lock para evitar race condition
                 cur.execute(
                     "SELECT * FROM produtos WHERE id = %s FOR UPDATE",
                     (produto["id"],),
@@ -513,18 +532,17 @@ def _tentar_registrar_pedido(conversa_id: int, produto: dict, quantidade: int) -
 
                 valor_total = float(produto_atual["preco"]) * quantidade
 
-                # Busca o cliente dono da conversa
                 cur.execute(
                     "SELECT cliente_id FROM conversas WHERE id = %s",
                     (conversa_id,),
                 )
                 conversa_row = cur.fetchone()
                 if not conversa_row:
+                    logger.warning("Conversa id=%s não encontrada ao registrar pedido.", conversa_id)
                     return {"sucesso": False, "pedido": None, "erro": "Conversa não encontrada"}
 
                 cliente_id = conversa_row["cliente_id"]
 
-                # Grava o pedido
                 cur.execute(
                     """
                     INSERT INTO pedidos (cliente_id, conversa_id, produto_id, quantidade, valor_total, status)
@@ -535,7 +553,6 @@ def _tentar_registrar_pedido(conversa_id: int, produto: dict, quantidade: int) -
                 )
                 pedido = cur.fetchone()
 
-                # Reserva/decrementa estoque
                 cur.execute(
                     "UPDATE produtos SET quantidade_estoque = quantidade_estoque - %s WHERE id = %s",
                     (quantidade, produto_atual["id"]),
@@ -551,27 +568,25 @@ def _tentar_registrar_pedido(conversa_id: int, produto: dict, quantidade: int) -
                 return {"sucesso": True, "pedido": dict(pedido), "erro": None}
 
     except psycopg2.OperationalError as e:
-        # Falha de conexão com o banco (CT07)
         logger.error(
-            "FALHA DE CONEXÃO COM O BANCO ao registrar pedido | conversa=%s produto=%s | %s",
-            conversa_id, produto.get("nome", "?"), str(e),
+            "FALHA DE CONEXÃO ao registrar pedido | conversa=%s produto=%s | %s",
+            conversa_id, produto.get("nome", "?"), e,
         )
-        return {"sucesso": False, "pedido": None, "erro": f"Falha de conexão: {e}"}
+        return {"sucesso": False, "pedido": None, "erro": f"Falha de conexão com o banco: {e}"}
 
     except psycopg2.Error as e:
-        # Outros erros de banco
         logger.error(
             "ERRO DE BANCO ao registrar pedido | conversa=%s produto=%s | %s",
-            conversa_id, produto.get("nome", "?"), str(e),
+            conversa_id, produto.get("nome", "?"), e,
         )
-        return {"sucesso": False, "pedido": None, "erro": f"Erro de banco: {e}"}
+        return {"sucesso": False, "pedido": None, "erro": f"Erro de banco de dados: {e}"}
 
     except Exception as e:
         logger.error(
             "ERRO INESPERADO ao registrar pedido | conversa=%s | %s",
-            conversa_id, str(e),
+            conversa_id, e,
         )
-        return {"sucesso": False, "pedido": None, "erro": f"Erro inesperado: {e}"}
+        return {"sucesso": False, "pedido": None, "erro": f"Erro inesperado: {e or 'erro desconhecido'}"}
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -596,106 +611,74 @@ def extrair_palavras_chave(mensagem: str) -> list[str]:
 # ══════════════════════════════════════════════════════════════════
 
 def cadastrar_cliente(nome: str, email: str, senha_hash: str):
-    with get_connection() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(
-                "INSERT INTO clientes (nome, email, senha) VALUES (%s, %s, %s) RETURNING *",
-                (nome, email, senha_hash),
-            )
-            return cur.fetchone()
+    try:
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    "INSERT INTO clientes (nome, email, senha) VALUES (%s, %s, %s) RETURNING *",
+                    (nome, email, senha_hash),
+                )
+                return cur.fetchone()
+    except psycopg2.errors.UniqueViolation:
+        raise ValueError("Já existe um cliente cadastrado com este email.")
+    except psycopg2.Error as e:
+        logger.error("Erro ao cadastrar cliente: %s", e)
+        raise RuntimeError(f"Erro ao cadastrar cliente no banco de dados: {e}")
 
 
 def iniciar_conversa(cliente_id: int):
-    with get_connection() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(
-                "INSERT INTO conversas (cliente_id) VALUES (%s) RETURNING *",
-                (cliente_id,),
-            )
-            return cur.fetchone()
+    try:
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    "INSERT INTO conversas (cliente_id) VALUES (%s) RETURNING *",
+                    (cliente_id,),
+                )
+                return cur.fetchone()
+    except psycopg2.errors.ForeignKeyViolation:
+        raise ValueError(f"Cliente com id {cliente_id} não encontrado.")
+    except psycopg2.Error as e:
+        logger.error("Erro ao iniciar conversa | cliente=%s | %s", cliente_id, e)
+        raise RuntimeError(f"Erro ao iniciar conversa: {e}")
 
 
 def encerrar_conversa(conversa_id: int):
-    with get_connection() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(
-                "UPDATE conversas SET encerrada_em = CURRENT_TIMESTAMP WHERE id = %s RETURNING *",
-                (conversa_id,),
-            )
-            return cur.fetchone()
+    try:
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    "UPDATE conversas SET encerrada_em = CURRENT_TIMESTAMP WHERE id = %s RETURNING *",
+                    (conversa_id,),
+                )
+                return cur.fetchone()
+    except psycopg2.Error as e:
+        logger.error("Erro ao encerrar conversa | conversa=%s | %s", conversa_id, e)
+        raise RuntimeError(f"Erro ao encerrar conversa: {e}")
 
 
 def salvar_mensagem(conversa_id: int, remetente: str, conteudo: str):
-    with get_connection() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(
-                "INSERT INTO mensagens (conversa_id, remetente, conteudo) VALUES (%s, %s, %s) RETURNING *",
-                (conversa_id, remetente, conteudo),
-            )
-            return cur.fetchone()
+    try:
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    "INSERT INTO mensagens (conversa_id, remetente, conteudo) VALUES (%s, %s, %s) RETURNING *",
+                    (conversa_id, remetente, conteudo),
+                )
+                return cur.fetchone()
+    except psycopg2.Error as e:
+        logger.error("Erro ao salvar mensagem | conversa=%s remetente=%s | %s", conversa_id, remetente, e)
+        raise RuntimeError(f"Erro ao salvar mensagem: {e}")
 
 
 def registrar_recomendacao(conversa_id: int, produto_id: int, mensagem_id: int):
-    with get_connection() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(
-                "INSERT INTO recomendacoes (conversa_id, produto_id, mensagem_id) VALUES (%s, %s, %s) RETURNING *",
-                (conversa_id, produto_id, mensagem_id),
-            )
-            return cur.fetchone()
-
-
-def cadastrar_produto(nome: str, descricao: str, categoria: str, preco: float, quantidade_estoque: int):
-    with get_connection() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(
-                "INSERT INTO produtos (nome, descricao, categoria, preco, quantidade_estoque) "
-                "VALUES (%s, %s, %s, %s, %s) RETURNING *",
-                (nome, descricao, categoria, preco, quantidade_estoque),
-            )
-            return cur.fetchone()
-
-
-def buscar_produtos(palavras_chave: list[str]):
-    if not palavras_chave:
-        return []
-    with get_connection() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            filtros = " OR ".join([
-                "nome ILIKE %s OR descricao ILIKE %s OR categoria ILIKE %s"
-                for _ in palavras_chave
-            ])
-            valores = [v for p in palavras_chave for v in (f"%{p}%", f"%{p}%", f"%{p}%")]
-            cur.execute(
-                f"SELECT * FROM produtos WHERE ({filtros}) AND quantidade_estoque > 0 AND ativo = TRUE",
-                valores,
-            )
-            return cur.fetchall()
-
-
-def buscar_historico(cliente_id: int):
-    with get_connection() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("""
-                SELECT m.remetente, m.conteudo, m.enviada_em
-                FROM mensagens m
-                JOIN conversas c ON c.id = m.conversa_id
-                WHERE c.cliente_id = %s
-                ORDER BY m.enviada_em ASC
-            """, (cliente_id,))
-            return cur.fetchall()
-
-
-def buscar_pedidos(cliente_id: int):
-    """Retorna todos os pedidos de um cliente."""
-    with get_connection() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("""
-                SELECT p.id, p.quantidade, p.valor_total, p.status, p.criado_em,
-                       pr.nome AS produto_nome, pr.categoria
-                FROM pedidos p
-                JOIN produtos pr ON pr.id = p.produto_id
-                WHERE p.cliente_id = %s
-                ORDER BY p.criado_em DESC
-            """, (cliente_id,))
-            return cur.fetchall()
+    try:
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    "INSERT INTO recomendacoes (conversa_id, produto_id, mensagem_id) VALUES (%s, %s, %s) RETURNING *",
+                    (conversa_id, produto_id, mensagem_id),
+                )
+                return cur.fetchone()
+    except psycopg2.Error as e:
+        logger.error("Erro ao registrar recomendação | conversa=%s produto=%s | %s", conversa_id, produto_id, e)
+        raise RuntimeError(f"Erro
